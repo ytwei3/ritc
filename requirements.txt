@@ -1,0 +1,8 @@
+requests
+pandas
+scipy
+scikit-learn
+matplotlib
+pyautogui
+pyqt5
+PyQt5-stubs==5.15.6.0
