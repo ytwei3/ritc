@@ -10,15 +10,20 @@ hence there should not be any issue caused.
 """
 import re
 import signal
+import time
+
 import requests
 from time import sleep
 from sklearn.linear_model import LinearRegression
 import pandas as pd
+import concurrent.futures
 
 
 CAPM_vals = {}
 expected_return = {}
 real_return = {}
+
+excuter = concurrent.futures.ThreadPoolExecutor(max_workers=10)
 
 
 # class that passes error message, ends the program
@@ -35,7 +40,7 @@ def signal_handler(signum, frame):
     shutdown = True
 
 
-API_KEY = {"X-API-Key": "1CHC0ZAZ"}
+API_KEY = {"X-API-Key": "114514"}
 shutdown = False
 session = requests.Session()
 session.headers.update(API_KEY)
@@ -91,13 +96,9 @@ def buy_or_sell(session, real_return):  # , signal="BUY"):
     max_er = max(real_return, key=real_return.get)
     min_er = min(real_return, key=real_return.get)
 
-    # if all expected returns are positive, buy the one with the highest expected return
-
-    gross_pos = abs(get_position("ALPHA")) + \
-        abs(get_position("GAMMA")) + abs(get_position("THETA"))
-    net_pos = get_position("ALPHA") + \
-        get_position("GAMMA") + get_position("THETA")
-    if real_return[max_er] > 0.03 and gross_pos < 250000 and net_pos < 100000:
+    gross_pos = abs(get_position("ALPHA")) + abs(get_position("GAMMA")) + abs(get_position("THETA"))
+    net_pos = get_position("ALPHA") + get_position("GAMMA") + get_position("THETA")
+    if real_return[max_er] > 0.6 and gross_pos < 250000 and net_pos < 100000:
         r = session.post(
             "http://localhost:9999/v1/orders",
             params={
@@ -108,7 +109,7 @@ def buy_or_sell(session, real_return):  # , signal="BUY"):
             },
         )
 
-    if real_return[min_er] < -0.03 and gross_pos < 250000 and net_pos > -100000:
+    if real_return[min_er] < -0.6 and gross_pos < 250000 and net_pos > -100000:
         r = session.post(
             "http://localhost:9999/v1/orders",
             params={
@@ -119,26 +120,70 @@ def buy_or_sell(session, real_return):  # , signal="BUY"):
             }
         )
 
+def post_order(ticker, action, quantity):
+    r = session.post(
+        "http://localhost:9999/v1/orders",
+        params={
+            "ticker": ticker,
+            "type": "MARKET",
+            "quantity": quantity,
+            "action": action,
+        },
+    )
+    return r
 
-def pop_real_bid_ask(session, ticker):
-    s = session.get(
-        f"http://localhost:9999/v1/securities/book?ticker={ticker}").json()
-    bid, ask = 0, 0
+def setup_portfolio(real_return):
+    max_er = max(real_return, key=real_return.get)
+    min_er = min(real_return, key=real_return.get)
 
-    for open_order in s['bids']:
-        if open_order['quantity'] > 10000:
-            bid = open_order['price']
-            break
+    if max_er > 0 and min_er > 0:
+        for _ in range(10):
+            post_order(max_er, "BUY", "10000")
+        for _ in range(7):
+            post_order(min_er, "SELL", "10000")
+        for _ in range(7):
+            post_order(max_er, "BUY", "10000")
 
-    for open_order in s['asks']:
-        if open_order['quantity'] > 10000:
-            ask = open_order['price']
-            break
+        post_order(max_er, "SELL", "5000")
+        post_order(max_er, "BUY", "5000")
 
-    # if bid == 0 or ask == 0:
-    #     raise ApiException("No bid or ask found")
+    elif max_er < 0 and min_er < 0:
+        for _ in range(10):
+            post_order(max_er, "SELL", "10000")
+        for _ in range(7):
+            post_order(min_er, "BUY", "10000")
+        for _ in range(7):
+            post_order(max_er, "SELL", "10000")
 
-    return bid, ask
+        post_order(max_er, "BUY", "5000")
+        post_order(max_er, "SELL", "5000")
+
+    else:
+
+
+    # if three has same sign, then buy the largest one 100000, then short the smallest one 75000
+    # then buy the largest one 75000
+
+
+# def pop_real_bid_ask(session, ticker):
+#     s = session.get(
+#         f"http://localhost:9999/v1/securities/book?ticker={ticker}").json()
+#     bid, ask = 0, 0
+#
+#     for open_order in s['bids']:
+#         if open_order['quantity'] > 10000:
+#             bid = open_order['price']
+#             break
+#
+#     for open_order in s['asks']:
+#         if open_order['quantity'] > 10000:
+#             ask = open_order['price']
+#             break
+#
+#     # if bid == 0 or ask == 0:
+#     #     raise ApiException("No bid or ask found")
+#
+#     return bid, ask
 
 
 def close_all_positions(session):
@@ -196,6 +241,8 @@ def main():
         theta = pd.DataFrame(
             columns=["THETA", "BID", "ASK", "LAST", "%Ri", "%Rm"])
         while get_tick(session) < 600 and not shutdown:
+            t = time.time()
+
             # update the forward market price and rf rate
             get_news(session)
 
@@ -228,15 +275,12 @@ def main():
             # update ALPHA bid-ask dataframe
             pdt_ALPHA = pd.DataFrame(pop_prices(session)[1])
 
-            alpha_bid, alpha_ask = pop_real_bid_ask(session, "ALPHA")
+            # alpha_bid, alpha_ask = pop_real_bid_ask(session, "ALPHA")
             alphap = pd.DataFrame(
                 {
                     "ALPHA": "",
-                    "BID": alpha_bid,
-                    "ASK": alpha_ask,
-                    # "LAST": (alpha_bid + alpha_ask) / 2,
-                    # "BID": pdt_ALPHA["bid"],
-                    # "ASK": pdt_ALPHA["ask"],
+                    "BID": pdt_ALPHA["bid"],
+                    "ASK": pdt_ALPHA["ask"],
                     "LAST": pdt_ALPHA["last"],
                     "%Ri": "",
                     "%Rm": "",
@@ -253,12 +297,14 @@ def main():
             # update GAMMA bid-ask dataframe
             pdt_GAMMA = pd.DataFrame(pop_prices(session)[2])
 
-            gamma_bid, gamma_ask = pop_real_bid_ask(session, "GAMMA")
+            # gamma_bid, gamma_ask = pop_real_bid_ask(session, "GAMMA")
             gammap = pd.DataFrame(
                 {
                     "GAMMA": "",
-                    "BID": gamma_bid,
-                    "ASK": gamma_ask,
+                    # "BID": gamma_bid,
+                    # "ASK": gamma_ask,
+                    "BID": pdt_GAMMA["bid"],
+                    "ASK": pdt_GAMMA["ask"],
                     # "LAST": (gamma_bid + gamma_ask) / 2,
                     "LAST": pdt_GAMMA["last"],
 
@@ -277,12 +323,14 @@ def main():
             # update THETA bid-ask dataframe
             pdt_THETA = pd.DataFrame(pop_prices(session)[3])
 
-            theta_bid, theta_ask = pop_real_bid_ask(session, "THETA")
+            # theta_bid, theta_ask = pop_real_bid_ask(session, "THETA")
             thetap = pd.DataFrame(
                 {
                     "THETA": "",
-                    "BID": theta_bid,
-                    "ASK": theta_ask,
+                    # "BID": theta_bid,
+                    # "ASK": theta_ask,
+                    "BID": pdt_THETA["bid"],
+                    "ASK": pdt_THETA["ask"],
                     # "LAST": (theta_bid + theta_ask) / 2,
                     "LAST": pdt_THETA["last"],
                     "%Ri": "",
@@ -339,16 +387,55 @@ def main():
                 real_return["GAMMA"] = er_gamma * gamma.at[0, "LAST"]
                 real_return["THETA"] = er_theta * theta.at[0, "LAST"]
 
+                if real_return["ALPHA"] > 0:
+                    real_return["ALPHA action"] = "BUY"
+                elif real_return["ALPHA"] < 0:
+                    real_return["ALPHA action"] = "SELL"
+
+                real_return["Adjust ALPHA"] = abs(real_return["ALPHA"]) - 0.6
+
+                if real_return["GAMMA"] > 0:
+                    real_return["GAMMA action"] = "BUY"
+                elif real_return["GAMMA"] < 0:
+                    real_return["GAMMA action"] = "SELL"
+
+                real_return["Adjust GAMMA"] = abs(real_return["GAMMA"]) - 0.4
+
+                if real_return["THETA"] > 0:
+                    real_return["THETA action"] = "BUY"
+                elif real_return["THETA"] < 0:
+                    real_return["THETA action"] = "SELL"
+
+                real_return["Adjust THETA"] = abs(real_return["THETA"]) - 0.2
+
+                print("alpha real return: ", real_return["ALPHA"])
+                print("gamma real return: ", real_return["GAMMA"])
+                print("theta real return: ", real_return["THETA"])
+
+                print("alpha adjusted return: ", real_return["Adjust ALPHA"])
+                print("gamma adjusted return: ", real_return["Adjust GAMMA"])
+                print("theta adjusted return: ", real_return["Adjust THETA"])
+
             tick = get_tick(session)
             news = session.get("http://localhost:9999/v1/news").json()
 
+            # print("ritm bid ask spread is:", ritm["ASK"].iloc[0] - ritm["BID"].iloc[0])
+            # print("alpha bid ask spread is:", alpha["ASK"].iloc[0] - alpha["BID"].iloc[0])
+            # print("gamma bid ask spread is:", gamma["ASK"].iloc[0] - gamma["BID"].iloc[0])
+            # print("theta bid ask spread is:", theta["ASK"].iloc[0] - theta["BID"].iloc[0])
+
             if len(news) > 1:
                 if "tick" in CAPM_vals.keys() and tick < CAPM_vals["tick"]:
+                    print("in news")
                     buy_or_sell(session, real_return)
                     # if ((pdt_RITM["bid"] + pdt_RITM["ask"]) / 2 > CAPM_vals["forward"]).bool():
                     #     buy_or_sell(session, expected_return, "SELL")
                     # else:
                     #     buy_or_sell(session, expected_return, "BUY")
+                if "tick" in CAPM_vals.keys() and tick == CAPM_vals["tick"]:
+                    print("Tick is equal to the forward market prediction: ", CAPM_vals["tick"])
+                    print("forward market prediction: ", CAPM_vals["forward"])
+                    print("last price: ", pdt_RITM["last"])
                 else:
                     # print(
                     #     "Tick is less than the forward market prediction, waiting for the market to catch up")
@@ -358,7 +445,7 @@ def main():
             # print(expected_return)
 
             # slow down for debuf purposes
-            # sleep(1)
+            sleep(0.5)
 
 
 if __name__ == "__main__":
