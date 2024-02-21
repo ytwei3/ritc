@@ -268,11 +268,9 @@ def close_all_positions(session):
     # return model.coef_
 
 
-from collections import deque
-
-alpha_beta = deque(maxlen=10)
-gamma_beta = deque(maxlen=10)
-theta_beta = deque(maxlen=10)
+alpha_beta = []
+gamma_beta = []
+theta_beta = []
 
 def main():
     with requests.Session() as session:
@@ -392,18 +390,18 @@ def main():
             beta_theta = (theta["%Ri"].cov(ritm["%Rm"])) / (ritm["%Rm"].var())
 
             # examine outliers
-            if len(alpha_beta) < 5:
-                alpha_beta.append(beta_alpha)
-            if len(alpha_beta) > 5 and abs(beta_alpha - np.array(alpha_beta).mean()) < 0.3:
-                alpha_beta.append(beta_alpha)
-            if len(gamma_beta) < 5:
-                gamma_beta.append(beta_gamma)
-            if len(gamma_beta) > 5 and abs(beta_gamma - np.array(gamma_beta).mean()) < 0.3:
-                gamma_beta.append(beta_gamma)
-            if len(theta_beta) < 5:
-                theta_beta.append(beta_theta)
-            if len(theta_beta) > 5 and abs(beta_theta - np.array(theta_beta).mean()) < 0.3:
-                theta_beta.append(beta_theta)
+            # if len(alpha_beta) < 5:
+            #     alpha_beta.append(beta_alpha)
+            # if len(alpha_beta) > 5 and abs(beta_alpha - np.array(alpha_beta).mean()) < 0.3:
+            #     alpha_beta.append(beta_alpha)
+            # if len(gamma_beta) < 5:
+            #     gamma_beta.append(beta_gamma)
+            # if len(gamma_beta) > 5 and abs(beta_gamma - np.array(gamma_beta).mean()) < 0.3:
+            #     gamma_beta.append(beta_gamma)
+            # if len(theta_beta) < 5:
+            #     theta_beta.append(beta_theta)
+            # if len(theta_beta) > 5 and abs(beta_theta - np.array(theta_beta).mean()) < 0.3:
+            #     theta_beta.append(beta_theta)
 
             CAPM_vals["Beta - ALPHA"] = np.array(alpha_beta).mean()
             CAPM_vals["Beta - GAMMA"] = np.array(gamma_beta).mean()

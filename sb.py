@@ -4,47 +4,34 @@ import concurrent.futures
 import requests
 import time
 
-s = requests.Session()
-s.headers.update({"x-api-key": "114514"})
+session = requests.Session()
+session.headers.update({"x-api-key": "114514"})
 
 
-def sumbit(ticker):
-    r = s.post(
-        "http://localhost:9999/v1/orders",
-        params={
-            "ticker": ticker,
-            "type": "MARKET",
-            "quantity": "1",
-            "action": "SELL",
-        },
-    )
+mega_orders_price = []
+
+def pop_last_mega_transacted_price(ticker):
+    s = session.get(f"http://localhost:9999/v1/securities/book?ticker={ticker}").json()
+    for order in s['bids']:
+        if order['quantity'] > 10000:
+            # mega_orders.append(order)
+            print("mega order found")
+            print("order size: ", order['quantity'])
+            print(order)
+            if order["quantity_filled"] > 0:
+                return order['price']
+
+    for order in s['asks']:
+        if order['quantity'] > 10000:
+            # mega_orders.append(order)
+            print("mega order found")
+            print("order size: ", order['quantity'])
+            print(order)
+            if order["quantity_filled"] > 0:
+                return order['price']
 
 
-# send orders to ALPHA, GAMMA, THETA
-# with concurrent.futures.ThreadPoolExecutor(max_workers=10) as executor:
-#     for _ in range(20):
-#         executor.submit(sumbit, "ALGO")
-#
-#     print("done")
 
-
-# t = time.time()
-# sec = s.get("http://localhost:9999/v1/securities", params={"ticker":"ALPHA"}).json()
-# while True:
-#     sec_new = s.get("http://localhost:9999/v1/securities", params={"ticker": "ALPHA"}).json()
-#     if sec_new != sec:
-#         print("changed time:", time.time() - t)
-#         t = time.time()
-
-
-# r = s.post("http://localhost:9999/v1/orders", params={"ticker": "ALPHA", "type": "MARKET", "quantity": "10000", "action": "BUY"})
-#     for _ in range(20):
-#         executor.submit(sumbit, "ALGO")
-# print(r.json())
-
-
-sleep(2)
-for _ in range(20):
-    sumbit("ALPHA")
-
-
+while True:
+    pop_last_mega_transacted_price("ALPHA")
+    sleep(0.2)
