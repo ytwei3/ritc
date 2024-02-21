@@ -16,6 +16,7 @@ import requests
 from time import sleep
 from sklearn.linear_model import LinearRegression
 import pandas as pd
+import numpy as np
 import concurrent.futures
 
 
@@ -23,7 +24,12 @@ CAPM_vals = {}
 expected_return = {}
 real_return = {}
 
-excuter = concurrent.futures.ThreadPoolExecutor(max_workers=10)
+open_order_status = "NONE"
+order_id = 0
+
+front_running = True
+front_running_quantity = 1000
+mege_order_size = 100000000
 
 
 # class that passes error message, ends the program
@@ -120,7 +126,7 @@ def buy_or_sell(session, real_return):  # , signal="BUY"):
             }
         )
 
-def post_order(ticker, action, quantity):
+def post_market_order(ticker, action, quantity):
     r = session.post(
         "http://localhost:9999/v1/orders",
         params={
@@ -130,39 +136,71 @@ def post_order(ticker, action, quantity):
             "action": action,
         },
     )
+
+    if r.status_code == 429:
+        wait = r.json()["wait"]
+        sleep(wait)
+        post_market_order(ticker, action, quantity)
+
     return r
 
-def setup_portfolio(real_return):
+
+def post_limit_order(ticker, action, quantity, price):
+    r = session.post(
+        "http://localhost:9999/v1/orders",
+        params={
+            "ticker": ticker,
+            "type": "LIMIT",
+            "quantity": quantity,
+            "action": action,
+            "price": price,
+        },
+    )
+
+    if r.status_code == 429:
+        wait = r.json()["wait"]
+        sleep(wait)
+        post_market_order(ticker, action, quantity)
+
+    return r
+
+
+def pop_last_mega_transacted_price(ticker):
+    s = session.get(f"http://localhost:9999/v1/securities/book?ticker={ticker}").json()
+    for order in s['bids']:
+        if order['quantity'] > 10000:
+            print("mega order found")
+            print("order size: ", order['quantity'])
+            print(order)
+            if order["quantity_filled"] > 0:
+                return order['price']
+
+    for order in s['asks']:
+        if order['quantity'] > 10000:
+            print("mega order found")
+            print("order size: ", order['quantity'])
+            print(order)
+            if order["quantity_filled"] > 0:
+                return order['price']
+
+    raise Exception("No last transacted mega order found")
+
+
+def setup_portfolio(CAPM_vals, real_return, action):
     max_er = max(real_return, key=real_return.get)
     min_er = min(real_return, key=real_return.get)
 
-    if max_er > 0 and min_er > 0:
-        for _ in range(10):
-            post_order(max_er, "BUY", "10000")
-        for _ in range(7):
-            post_order(min_er, "SELL", "10000")
-        for _ in range(7):
-            post_order(max_er, "BUY", "10000")
+    # gross_pos = abs(get_position("ALPHA")) + abs(get_position("GAMMA")) + abs(get_position("THETA"))
+    # net_pos = get_position("ALPHA") + get_position("GAMMA") + get_position("THETA")
+    for _ in range(10):
+        post_market_order(max_er, "BUY" if action == "BUY" else "SELL", 10000)
 
-        post_order(max_er, "SELL", "5000")
-        post_order(max_er, "BUY", "5000")
+    for _ in range(10):
+        r = post_market_order(min_er, "SELL" if action == "SELL" else "BUY", 10000)
+        print(r)
 
-    elif max_er < 0 and min_er < 0:
-        for _ in range(10):
-            post_order(max_er, "SELL", "10000")
-        for _ in range(7):
-            post_order(min_er, "BUY", "10000")
-        for _ in range(7):
-            post_order(max_er, "SELL", "10000")
-
-        post_order(max_er, "BUY", "5000")
-        post_order(max_er, "SELL", "5000")
-
-    else:
-
-
-    # if three has same sign, then buy the largest one 100000, then short the smallest one 75000
-    # then buy the largest one 75000
+    for _ in range(5):
+        post_market_order(max_er, "BUY" if action == "BUY" else "SELL", 10000)
 
 
 # def pop_real_bid_ask(session, ticker):
@@ -230,16 +268,22 @@ def close_all_positions(session):
     # return model.coef_
 
 
+from collections import deque
+
+alpha_beta = deque(maxlen=10)
+gamma_beta = deque(maxlen=10)
+theta_beta = deque(maxlen=10)
+
 def main():
     with requests.Session() as session:
         session.headers.update(API_KEY)
         ritm = pd.DataFrame(columns=["RITM", "BID", "ASK", "LAST", "%Rm"])
         alpha = pd.DataFrame(
-            columns=["ALPHA", "BID", "ASK", "LAST", "%Ri", "%Rm"])
+            columns=["ALPHA", "BID", "ASK", "LAST", "%Ri", "%Rm", "Beta"])
         gamma = pd.DataFrame(
-            columns=["GAMMA", "BID", "ASK", "LAST", "%Ri", "%Rm"])
+            columns=["GAMMA", "BID", "ASK", "LAST", "%Ri", "%Rm", "Beta"])
         theta = pd.DataFrame(
-            columns=["THETA", "BID", "ASK", "LAST", "%Ri", "%Rm"])
+            columns=["THETA", "BID", "ASK", "LAST", "%Ri", "%Rm", "Beta"])
         while get_tick(session) < 600 and not shutdown:
             t = time.time()
 
@@ -284,6 +328,7 @@ def main():
                     "LAST": pdt_ALPHA["last"],
                     "%Ri": "",
                     "%Rm": "",
+                    "Beta": "",
                 }, index=[0]
             )
             if alpha["BID"].empty or alphap["LAST"].iloc[0] != alpha["LAST"].iloc[0]:
@@ -301,15 +346,11 @@ def main():
             gammap = pd.DataFrame(
                 {
                     "GAMMA": "",
-                    # "BID": gamma_bid,
-                    # "ASK": gamma_ask,
                     "BID": pdt_GAMMA["bid"],
-                    "ASK": pdt_GAMMA["ask"],
-                    # "LAST": (gamma_bid + gamma_ask) / 2,
                     "LAST": pdt_GAMMA["last"],
-
                     "%Ri": "",
                     "%Rm": "",
+                    "Beta": "",
                 }, index=[0]
             )
             if gamma["BID"].empty or gammap["LAST"].iloc[0] != gamma["LAST"].iloc[0]:
@@ -335,6 +376,7 @@ def main():
                     "LAST": pdt_THETA["last"],
                     "%Ri": "",
                     "%Rm": "",
+                    "Beta": "",
                 }, index=[0]
             )
             if theta["BID"].empty or thetap["LAST"].iloc[0] != theta["LAST"].iloc[0]:
@@ -349,17 +391,37 @@ def main():
             beta_gamma = (gamma["%Ri"].cov(ritm["%Rm"])) / (ritm["%Rm"].var())
             beta_theta = (theta["%Ri"].cov(ritm["%Rm"])) / (ritm["%Rm"].var())
 
-            CAPM_vals["Beta - ALPHA"] = beta_alpha
-            CAPM_vals["Beta - GAMMA"] = beta_gamma
-            CAPM_vals["Beta - THETA"] = beta_theta
+            # examine outliers
+            if len(alpha_beta) < 5:
+                alpha_beta.append(beta_alpha)
+            if len(alpha_beta) > 5 and abs(beta_alpha - np.array(alpha_beta).mean()) < 0.3:
+                alpha_beta.append(beta_alpha)
+            if len(gamma_beta) < 5:
+                gamma_beta.append(beta_gamma)
+            if len(gamma_beta) > 5 and abs(beta_gamma - np.array(gamma_beta).mean()) < 0.3:
+                gamma_beta.append(beta_gamma)
+            if len(theta_beta) < 5:
+                theta_beta.append(beta_theta)
+            if len(theta_beta) > 5 and abs(beta_theta - np.array(theta_beta).mean()) < 0.3:
+                theta_beta.append(beta_theta)
+
+            CAPM_vals["Beta - ALPHA"] = np.array(alpha_beta).mean()
+            CAPM_vals["Beta - GAMMA"] = np.array(gamma_beta).mean()
+            CAPM_vals["Beta - THETA"] = np.array(theta_beta).mean()
+
+            # if diff of beta larger than 0.2, drop this data
+            # if abs(beta_alpha - beta_gamma) > 0.2 or abs(beta_alpha - beta_theta) > 0.2 or abs(beta_gamma - beta_theta) > 0.2:
+            #     alpha = alpha.iloc[1:]
+            #     gamma = gamma.iloc[1:]
+            #     theta = theta.iloc[1:]
+            #
+            CAPM_vals["Beta - ALPHA"] = np.array(alpha_beta).mean()
+            CAPM_vals["Beta - GAMMA"] = np.array(gamma_beta).mean()
+            CAPM_vals["Beta - THETA"] = np.array(theta_beta).mean()
 
             print(get_tick(session))
             print("Beta : ", CAPM_vals["Beta - ALPHA"],
                   CAPM_vals["Beta - GAMMA"], CAPM_vals["Beta - THETA"])
-
-            # if len(alpha) > 10:
-            #     print("LG Beta : ", beta_from_linear_regression(ritm, alpha),  beta_from_linear_regression(
-            #         ritm, gamma),  beta_from_linear_regression(ritm, theta))
 
             # record camp, index is the tick
             if CAPM_vals["%RM"] != "":
@@ -381,71 +443,75 @@ def main():
             expected_return["GAMMA"] = er_gamma
             expected_return["THETA"] = er_theta
 
-            # if er_alpha is not string
             if type(er_alpha) != str:
                 real_return["ALPHA"] = er_alpha * alpha.at[0, "LAST"]
                 real_return["GAMMA"] = er_gamma * gamma.at[0, "LAST"]
                 real_return["THETA"] = er_theta * theta.at[0, "LAST"]
 
-                if real_return["ALPHA"] > 0:
-                    real_return["ALPHA action"] = "BUY"
-                elif real_return["ALPHA"] < 0:
-                    real_return["ALPHA action"] = "SELL"
-
-                real_return["Adjust ALPHA"] = abs(real_return["ALPHA"]) - 0.6
-
-                if real_return["GAMMA"] > 0:
-                    real_return["GAMMA action"] = "BUY"
-                elif real_return["GAMMA"] < 0:
-                    real_return["GAMMA action"] = "SELL"
-
-                real_return["Adjust GAMMA"] = abs(real_return["GAMMA"]) - 0.4
-
-                if real_return["THETA"] > 0:
-                    real_return["THETA action"] = "BUY"
-                elif real_return["THETA"] < 0:
-                    real_return["THETA action"] = "SELL"
-
-                real_return["Adjust THETA"] = abs(real_return["THETA"]) - 0.2
-
-                print("alpha real return: ", real_return["ALPHA"])
-                print("gamma real return: ", real_return["GAMMA"])
-                print("theta real return: ", real_return["THETA"])
-
-                print("alpha adjusted return: ", real_return["Adjust ALPHA"])
-                print("gamma adjusted return: ", real_return["Adjust GAMMA"])
-                print("theta adjusted return: ", real_return["Adjust THETA"])
-
             tick = get_tick(session)
             news = session.get("http://localhost:9999/v1/news").json()
-
-            # print("ritm bid ask spread is:", ritm["ASK"].iloc[0] - ritm["BID"].iloc[0])
-            # print("alpha bid ask spread is:", alpha["ASK"].iloc[0] - alpha["BID"].iloc[0])
-            # print("gamma bid ask spread is:", gamma["ASK"].iloc[0] - gamma["BID"].iloc[0])
-            # print("theta bid ask spread is:", theta["ASK"].iloc[0] - theta["BID"].iloc[0])
 
             if len(news) > 1:
                 if "tick" in CAPM_vals.keys() and tick < CAPM_vals["tick"]:
                     print("in news")
-                    buy_or_sell(session, real_return)
-                    # if ((pdt_RITM["bid"] + pdt_RITM["ask"]) / 2 > CAPM_vals["forward"]).bool():
-                    #     buy_or_sell(session, expected_return, "SELL")
-                    # else:
-                    #     buy_or_sell(session, expected_return, "BUY")
-                if "tick" in CAPM_vals.keys() and tick == CAPM_vals["tick"]:
+                    gross_pos = abs(get_position("ALPHA")) + abs(get_position("GAMMA")) + abs(get_position("THETA"))
+                    print("gross pos: ", gross_pos)
+                    if gross_pos == 0:
+                        if (CAPM_vals["forward"] < pdt_RITM["last"]).at[0]:
+                            setup_portfolio(CAPM_vals, real_return, "SELL")
+                        else:
+                            setup_portfolio(CAPM_vals, real_return, "BUY")
+                elif "tick" in CAPM_vals.keys() and tick == CAPM_vals["tick"]:
                     print("Tick is equal to the forward market prediction: ", CAPM_vals["tick"])
                     print("forward market prediction: ", CAPM_vals["forward"])
                     print("last price: ", pdt_RITM["last"])
+                    close_all_positions(session)
                 else:
                     # print(
                     #     "Tick is less than the forward market prediction, waiting for the market to catch up")
                     close_all_positions(session)
-
+            #
             # print statement (print, expected_return function, any of the tickers, or CAPM_vals dictionary)
-            # print(expected_return)
+            # front running
+            # check last transacted mega order
+            sec = session.get(f"http://localhost:9999/v1/securities/book?ticker=ALPHA").json()
+
+            # if len(ritm) >= 2:
+            #     ritm_diff = ritm["LAST"].iloc[0] - ritm["LAST"].iloc[1]
+            #     print("ritm diff: ", ritm_diff)
+            #
+            #     mega_price = 0
+            #     has_limit_order = False
+            #     mega_top_order = []
+            #     if ritm_diff * beta_alpha > 0:
+            #         for ask in sec['asks']:
+            #             if ask['trader_id'] == "CUHK-1":
+            #                 if tick - ask['tick'] > 2:
+            #                     session.delete(f"http://localhost:9999/v1/orders/{ask['order_id']}")
+            #                     post_market_order("ALPHA", "SELL", front_running_quantity)
+            #                 else:
+            #                     has_limit_order = True
+            #
+            #         for ask in sec['asks']:
+            #             if ask['quantity'] > 1000000:
+            #                 price = ask['price']
+            #                 print("mega order price: ", price)
+            #                 break
+            #             else:
+            #                 mega_top_order.append(ask)
+            #
+            #
+            #         if not has_limit_order and len(mega_top_order) > 2:
+            #             post_market_order("ALPHA", "BUY", front_running_quantity)
+            #             post_limit_order("ALPHA", "SELL", front_running_quantity, price - 0.01).json()
+            #
+            #             print("front running")
+            #             print("mega top order: ", mega_top_order)
+            #             sleep(10)
 
             # slow down for debuf purposes
-            sleep(0.5)
+
+            sleep(0.2)
 
 
 if __name__ == "__main__":

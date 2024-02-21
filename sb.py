@@ -13,9 +13,9 @@ def sumbit(ticker):
         "http://localhost:9999/v1/orders",
         params={
             "ticker": ticker,
-            "type": "LIMIT",
-            "quantity": "10000",
-            "action": "BUY",
+            "type": "MARKET",
+            "quantity": "1",
+            "action": "SELL",
         },
     )
 
@@ -37,7 +37,14 @@ def sumbit(ticker):
 #         t = time.time()
 
 
-r = s.post("http://localhost:9999/v1/orders", params={"ticker": "ALPHA", "type": "MARKET", "quantity": "10000", "action": "BUY"})
-    for _ in range(20):
-        executor.submit(sumbit, "ALGO")
-print(r.json())
+# r = s.post("http://localhost:9999/v1/orders", params={"ticker": "ALPHA", "type": "MARKET", "quantity": "10000", "action": "BUY"})
+#     for _ in range(20):
+#         executor.submit(sumbit, "ALGO")
+# print(r.json())
+
+
+sleep(2)
+for _ in range(20):
+    sumbit("ALPHA")
+
+
