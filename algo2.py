@@ -9,7 +9,7 @@ API_KEY = {'X-API-Key': '114514'}
 BASE_URL = "http://localhost:9999/v1"
 
 
-BID_ASK_SPREAD = 0.03
+BID_ASK_SPREAD = 0.05
 
 INVENTORY_THRESHOLD_1 = 15000
 INVENTORY_THRESHOLD_2 = 6000
@@ -28,15 +28,14 @@ SPEED_BUMP = 3
 
 
 def main():
-    ticker = "RIT_C"
+    ticker = "RIT_U"
     with requests.session() as s:
         s.headers.update(API_KEY)
         tick = s.get(BASE_URL + '/case').json()['tick']
         while 0 < tick < 300:
-            t = time.time()
             print("algo2 works on tick: ", tick)
             sec = s.get(BASE_URL + '/securities').json()[0]
-            book = s.get(BASE_URL + '/securities/book', params={'ticker': 'ALGO'}).json()
+            book = s.get(BASE_URL + '/securities/book', params={'ticker': ticker}).json()
 
             bids = book['bids']
             asks = book['asks']
@@ -104,6 +103,7 @@ def main():
             elif abs(position) < SAFE_VALUE_2 and len(open_order) > 24:
                 s.post(BASE_URL + '/orders/cancel', params={'all': 1})
 
+            tick = s.get(BASE_URL + '/case').json()['tick']
             sleep(SPEED_BUMP)
 
 
