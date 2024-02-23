@@ -63,7 +63,7 @@ class LineWidget(QWidget):
         self.url = "http://localhost:9999/v1"
 
         self.stock_combobox = QComboBox(self)
-        self.stock_combobox.addItems(["ALPHA", "BETA", "GAMMA"])
+        self.stock_combobox.addItems(["ALPHA", "THETA", "GAMMA"])
 
         self.buy_sell_button = QPushButton("BUY", self)
         self.buy_sell_button.clicked.connect(self.toggle_buy_sell)
